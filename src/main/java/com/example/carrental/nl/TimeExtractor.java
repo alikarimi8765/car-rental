@@ -4,15 +4,12 @@ import static com.example.carrental.nl.IssueKind.AMBIGUOUS;
 import static com.example.carrental.nl.IssueKind.INVALID;
 import static com.example.carrental.nl.IssueKind.MISSING;
 import static com.example.carrental.nl.ParserLexicon.CI;
-import static com.example.carrental.nl.ParseSupport.take;
 import static com.example.carrental.nl.RequestField.START_TIME;
 
 import com.example.carrental.nl.ParseSupport.Found;
-import com.example.carrental.nl.ParseSupport.Taken;
+import com.example.carrental.nl.ParseSupport.Scratch;
 
 import java.time.LocalTime;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.TreeSet;
 import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
@@ -35,82 +32,94 @@ final class TimeExtractor {
     }
 
     static Found<LocalTime> extract(String input) {
+        Scratch scratch = new Scratch(input);
         TreeSet<LocalTime> found = new TreeSet<>();
-        List<Issue> issues = new ArrayList<>();
-        String text = input;
 
-        Taken taken = take(NOON, text);
-        text = taken.text();
-        for (MatchResult m : taken.matches()) {
-            found.add(m.group(1).equalsIgnoreCase("midnight") ? LocalTime.MIDNIGHT : LocalTime.NOON);
-        }
+        collectNamedTimes(scratch, found);
+        collectHourMinute(scratch, found);
+        collectHourAmPm(scratch, found);
+        collectBareAt(scratch, found);
+        return resolve(scratch, found);
+    }
 
-        taken = take(HOUR_MINUTE, text);
-        text = taken.text();
-        for (MatchResult m : taken.matches()) {
+    private static void collectNamedTimes(Scratch scratch, TreeSet<LocalTime> found) {
+        scratch.forEach(NOON, m -> found.add(
+                m.group(1).equalsIgnoreCase("midnight") ? LocalTime.MIDNIGHT : LocalTime.NOON));
+    }
+
+    private static void collectHourMinute(Scratch scratch, TreeSet<LocalTime> found) {
+        scratch.forEach(HOUR_MINUTE, m -> {
             int hour = Integer.parseInt(m.group(1));
             int minute = Integer.parseInt(m.group(2));
             String seconds = m.group(3);
             String meridiem = m.group(4);
-            boolean invalid = minute > 59
-                    || (seconds != null && Integer.parseInt(seconds) != 0)
-                    || (meridiem == null && hour > 23)
-                    || (meridiem != null && (hour < 1 || hour > 12));
-            if (invalid) {
-                issues.add(invalidTime(m));
+
+            if (isInvalidHourMinute(hour, minute, seconds, meridiem)) {
+                scratch.issues().add(invalidTime(m));
             } else if (meridiem != null) {
                 found.add(to24Hour(hour, minute, meridiem));
-            } else { // HH:MM without am/pm is read as a 24-hour clock
+            } else {
+                // HH:MM without am/pm is read as a 24-hour clock.
                 found.add(LocalTime.of(hour, minute));
             }
-        }
+        });
+    }
 
-        taken = take(HOUR_AM_PM, text);
-        text = taken.text();
-        for (MatchResult m : taken.matches()) {
+    private static void collectHourAmPm(Scratch scratch, TreeSet<LocalTime> found) {
+        scratch.forEach(HOUR_AM_PM, m -> {
             int hour = Integer.parseInt(m.group(1));
             if (hour < 1 || hour > 12) {
-                issues.add(invalidTime(m));
+                scratch.issues().add(invalidTime(m));
             } else {
                 found.add(to24Hour(hour, 0, m.group(2)));
             }
-        }
+        });
+    }
 
-        taken = take(BARE_AT, text);
-        text = taken.text();
-        for (MatchResult m : taken.matches()) {
+    private static void collectBareAt(Scratch scratch, TreeSet<LocalTime> found) {
+        scratch.forEach(BARE_AT, m -> {
             int hour = Integer.parseInt(m.group(1));
             if (hour > 23) {
-                issues.add(invalidTime(m));
+                scratch.issues().add(invalidTime(m));
             } else if (hour >= 1 && hour <= 12) {
-                issues.add(new Issue(AMBIGUOUS, START_TIME,
+                scratch.issues().add(new Issue(AMBIGUOUS, START_TIME,
                         "'%s' could be %02d:00 or %02d:00; add am/pm or use 24-hour time (e.g. %02d:00)."
                                 .formatted(m.group().strip(), hour, (hour + 12) % 24, hour)));
             } else {
                 found.add(LocalTime.of(hour, 0)); // 0 or 13..23 can only be a 24-hour clock
             }
-        }
+        });
+    }
 
-        if (!issues.isEmpty()) {
-            return new Found<>(null, text, issues);
+    private static Found<LocalTime> resolve(Scratch scratch, TreeSet<LocalTime> found) {
+        if (scratch.hasIssues()) {
+            return scratch.empty();
         }
         if (found.size() > 1) {
-            issues.add(new Issue(AMBIGUOUS, START_TIME, "Several times found (%s); which one is the pick-up time?"
-                    .formatted(found.stream().map(LocalTime::toString).collect(Collectors.joining(", ")))));
-            return new Found<>(null, text, issues);
+            scratch.issues().add(new Issue(AMBIGUOUS, START_TIME,
+                    "Several times found (%s); which one is the pick-up time?"
+                            .formatted(found.stream().map(LocalTime::toString).collect(Collectors.joining(", ")))));
+            return scratch.empty();
         }
         if (found.size() == 1) {
-            return new Found<>(found.first(), text, issues);
+            return scratch.done(found.first());
         }
 
-        Matcher vague = VAGUE_TIME.matcher(text);
+        Matcher vague = VAGUE_TIME.matcher(scratch.text());
         if (vague.find()) {
-            issues.add(new Issue(AMBIGUOUS, START_TIME,
+            scratch.issues().add(new Issue(AMBIGUOUS, START_TIME,
                     "'%s' is not a specific time; give a time such as 10:00.".formatted(vague.group())));
         } else {
-            issues.add(new Issue(MISSING, START_TIME, "No start time found (e.g. 'at 10:00')."));
+            scratch.issues().add(new Issue(MISSING, START_TIME, "No start time found (e.g. 'at 10:00')."));
         }
-        return new Found<>(null, text, issues);
+        return scratch.empty();
+    }
+
+    private static boolean isInvalidHourMinute(int hour, int minute, String seconds, String meridiem) {
+        return minute > 59
+                || (seconds != null && Integer.parseInt(seconds) != 0)
+                || (meridiem == null && hour > 23)
+                || (meridiem != null && (hour < 1 || hour > 12));
     }
 
     private static Issue invalidTime(MatchResult m) {

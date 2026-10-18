@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.TreeSet;
+import java.util.function.Consumer;
 import java.util.regex.MatchResult;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -62,6 +63,15 @@ final class DateExtractor {
     private static final Pattern VAGUE_DATE =
             Pattern.compile("\\b(?:(?:next|this|coming)\\s+(?:week|month|weekend)|weekend)\\b", CI);
 
+    private static final List<DatePattern> NAMED_MONTH_PATTERNS = List.of(
+            new DatePattern(DAY_MONTH, 1, 2),
+            new DatePattern(MONTH_DAY, 2, 1));
+
+    private static final List<RelativeWord> RELATIVE_WORDS = List.of(
+            new RelativeWord(DAY_AFTER_TOMORROW, 2),
+            new RelativeWord(TOMORROW, 1),
+            new RelativeWord(TODAY, 0));
+
     private final Clock clock;
 
     DateExtractor(Clock clock) {
@@ -69,124 +79,136 @@ final class DateExtractor {
     }
 
     Found<LocalDate> extract(String input) {
-        LocalDate today = LocalDate.now(clock);
-        List<LocalDate> found = new ArrayList<>();
-        List<Issue> issues = new ArrayList<>();
-        String text = input;
+        Extraction ctx = new Extraction(input, LocalDate.now(clock));
 
-        Taken taken = take(ISO, text);
-        text = taken.text();
-        for (MatchResult m : taken.matches()) {
-            addValid(found, issues, Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)),
-                    Integer.parseInt(m.group(3)), m.group());
-        }
+        collectIso(ctx);
+        collectNumeric(ctx);
+        rejectAlternatives(ctx);
+        collectNamedMonthDates(ctx);
+        collectInNDays(ctx);
+        collectRelativeWords(ctx);
+        VagueHints vague = collectVagueHints(ctx);
 
-        taken = take(NUMERIC, text);
-        text = taken.text();
-        for (MatchResult m : taken.matches()) {
+        return resolve(ctx, vague);
+    }
+
+    private static void collectIso(Extraction ctx) {
+        ctx.forEach(ISO, m -> ctx.addValid(
+                Integer.parseInt(m.group(1)),
+                Integer.parseInt(m.group(2)),
+                Integer.parseInt(m.group(3)),
+                m.group()));
+    }
+
+    private static void collectNumeric(Extraction ctx) {
+        ctx.forEach(NUMERIC, m -> {
             int a = Integer.parseInt(m.group(1));
             int b = Integer.parseInt(m.group(2));
             int year = Integer.parseInt(m.group(3));
-            if (a > 12 || a == b || a < 1 || b < 1) { // only day-first is possible, or both readings agree
-                addValid(found, issues, year, b, a, m.group());
-            } else if (b > 12) { // only month-first is possible
-                addValid(found, issues, year, a, b, m.group());
+            if (a > 12 || a == b || a < 1 || b < 1) {
+                // Only day-first is possible, or both readings agree.
+                ctx.addValid(year, b, a, m.group());
+            } else if (b > 12) {
+                // Only month-first is possible.
+                ctx.addValid(year, a, b, m.group());
             } else {
                 LocalDate dayFirst = LocalDate.of(year, b, a);
                 LocalDate monthFirst = LocalDate.of(year, a, b);
-                issues.add(new Issue(AMBIGUOUS, START_DATE,
+                ctx.issues.add(new Issue(AMBIGUOUS, START_DATE,
                         "'%s' could mean %s or %s; write the month as a word or use YYYY-MM-DD."
                                 .formatted(m.group(), HumanDates.date(dayFirst), HumanDates.date(monthFirst))));
             }
-        }
+        });
+    }
 
-        taken = take(DAY_ALTERNATIVES, text);
-        text = taken.text();
-        for (MatchResult m : taken.matches()) {
-            issues.add(ambiguousAlternativeDate(m.group()));
-        }
+    private static void rejectAlternatives(Extraction ctx) {
+        Consumer<MatchResult> reject = m -> ctx.issues.add(ambiguousAlternativeDate(m.group()));
+        ctx.forEach(DAY_ALTERNATIVES, reject);
+        ctx.forEach(MONTH_DAY_ALTERNATIVES, reject);
+    }
 
-        taken = take(MONTH_DAY_ALTERNATIVES, text);
-        text = taken.text();
-        for (MatchResult m : taken.matches()) {
-            issues.add(ambiguousAlternativeDate(m.group()));
-        }
-
-        for (DatePattern rule : List.of(new DatePattern(DAY_MONTH, 1, 2), new DatePattern(MONTH_DAY, 2, 1))) {
-            taken = take(rule.pattern(), text);
-            text = taken.text();
-            for (MatchResult m : taken.matches()) {
+    private static void collectNamedMonthDates(Extraction ctx) {
+        for (DatePattern rule : NAMED_MONTH_PATTERNS) {
+            ctx.forEach(rule.pattern(), m -> {
                 int day = Integer.parseInt(m.group(rule.dayGroup()));
                 int month = MONTHS.get(m.group(rule.monthGroup()).toLowerCase(Locale.ROOT));
                 String shown = m.group().strip();
                 if (m.group(3) != null) {
-                    addValid(found, issues, Integer.parseInt(m.group(3)), month, day, shown);
+                    ctx.addValid(Integer.parseInt(m.group(3)), month, day, shown);
                 } else {
-                    resolveMissingYear(day, month, shown, today, issues);
+                    resolveMissingYear(day, month, shown, ctx.today, ctx.issues);
                 }
-            }
+            });
         }
+    }
 
-        taken = take(IN_N, text);
-        text = taken.text();
-        for (MatchResult m : taken.matches()) {
+    private static void collectInNDays(Extraction ctx) {
+        ctx.forEach(IN_N, m -> {
             long n = (long) toNumber(m.group(1)).orElse(0);
             long daysAhead = n * (m.group(2).toLowerCase(Locale.ROOT).startsWith("week") ? 7 : 1);
             if (daysAhead > 36_500) {
-                issues.add(new Issue(INVALID, START_DATE, "'%s' is too far in the future.".formatted(m.group())));
+                ctx.issues.add(new Issue(INVALID, START_DATE, "'%s' is too far in the future.".formatted(m.group())));
             } else {
-                found.add(today.plusDays(daysAhead));
+                ctx.found.add(ctx.today.plusDays(daysAhead));
             }
-        }
+        });
+    }
 
-        for (RelativeWord word : List.of(new RelativeWord(DAY_AFTER_TOMORROW, 2),
-                new RelativeWord(TOMORROW, 1), new RelativeWord(TODAY, 0))) {
-            taken = take(word.pattern(), text);
-            text = taken.text();
+    private static void collectRelativeWords(Extraction ctx) {
+        for (RelativeWord word : RELATIVE_WORDS) {
+            Taken taken = take(word.pattern(), ctx.text);
+            ctx.text = taken.text();
             if (!taken.matches().isEmpty()) {
-                found.add(today.plusDays(word.offsetDays()));
+                ctx.found.add(ctx.today.plusDays(word.offsetDays()));
             }
         }
+    }
 
-        taken = take(WEEKDAY, text);
-        text = taken.text();
-        List<MatchResult> weekdayMatches = taken.matches();
-        List<DayOfWeek> weekdays = weekdayMatches.stream()
-                .map(m -> WEEKDAYS.get(m.group(1).toLowerCase(Locale.ROOT)))
-                .toList();
-        taken = take(VAGUE_DATE, text);
-        text = taken.text();
-        List<MatchResult> vagueMatches = taken.matches();
+    private static VagueHints collectVagueHints(Extraction ctx) {
+        Taken weekdays = take(WEEKDAY, ctx.text);
+        ctx.text = weekdays.text();
+        Taken vague = take(VAGUE_DATE, ctx.text);
+        ctx.text = vague.text();
+        return new VagueHints(weekdays.matches(), vague.matches());
+    }
 
-        TreeSet<LocalDate> distinct = new TreeSet<>(found);
+    private static Found<LocalDate> resolve(Extraction ctx, VagueHints vague) {
+        TreeSet<LocalDate> distinct = new TreeSet<>(ctx.found);
         if (distinct.size() > 1) {
-            issues.add(new Issue(AMBIGUOUS, START_DATE, "Several dates found (%s); I need one start date and a number of days."
-                    .formatted(distinct.stream().map(HumanDates::date).collect(Collectors.joining(", ")))));
-            return new Found<>(null, text, issues);
+            ctx.issues.add(new Issue(AMBIGUOUS, START_DATE,
+                    "Several dates found (%s); I need one start date and a number of days."
+                            .formatted(distinct.stream().map(HumanDates::date).collect(Collectors.joining(", ")))));
+            return ctx.incomplete();
         }
 
         if (distinct.size() == 1) {
             LocalDate result = distinct.first();
-            List<DayOfWeek> wrong = weekdays.stream().filter(day -> day != result.getDayOfWeek()).toList();
+            List<DayOfWeek> mentioned = vague.weekdays().stream()
+                    .map(m -> WEEKDAYS.get(m.group(1).toLowerCase(Locale.ROOT)))
+                    .toList();
+            List<DayOfWeek> wrong = mentioned.stream().filter(day -> day != result.getDayOfWeek()).toList();
             if (!wrong.isEmpty()) {
-                issues.add(new Issue(AMBIGUOUS, START_DATE, "%s is a %s, not a %s. Which did you mean?".formatted(
-                        HumanDates.date(result), dayName(result.getDayOfWeek()), dayName(wrong.get(0)))));
-                return new Found<>(null, text, issues);
+                ctx.issues.add(new Issue(AMBIGUOUS, START_DATE, "%s is a %s, not a %s. Which did you mean?".formatted(
+                        HumanDates.date(result), dayName(result.getDayOfWeek()), dayName(wrong.getFirst()))));
+                return ctx.incomplete();
             }
-            return new Found<>(issues.isEmpty() ? result : null, text, issues);
+            return ctx.completeIfClean(result);
         }
 
-        if (issues.isEmpty()) { // nothing found and nothing already complained about
-            if (!weekdayMatches.isEmpty() || !vagueMatches.isEmpty()) {
-                String vague = Stream.concat(weekdayMatches.stream(), vagueMatches.stream())
-                        .findFirst().orElseThrow().group().strip();
-                issues.add(new Issue(AMBIGUOUS, START_DATE, "'%s' is too vague; give an explicit date such as %s."
-                        .formatted(vague, HumanDates.date(today.plusDays(7)))));
+        if (ctx.issues.isEmpty()) {
+            if (vague.hasHints()) {
+                String phrase = Stream.concat(vague.weekdays().stream(), vague.vague().stream())
+                        .findFirst()
+                        .orElseThrow()
+                        .group()
+                        .strip();
+                ctx.issues.add(new Issue(AMBIGUOUS, START_DATE, "'%s' is too vague; give an explicit date such as %s."
+                        .formatted(phrase, HumanDates.date(ctx.today.plusDays(7)))));
             } else {
-                issues.add(new Issue(MISSING, START_DATE, "No start date found (e.g. '15 October 2026')."));
+                ctx.issues.add(new Issue(MISSING, START_DATE, "No start date found (e.g. '15 October 2026')."));
             }
         }
-        return new Found<>(null, text, issues);
+        return ctx.incomplete();
     }
 
     private static void addValid(List<LocalDate> found, List<Issue> issues, int year, int month, int day, String shown) {
@@ -223,6 +245,43 @@ final class DateExtractor {
 
     private static String dayName(DayOfWeek day) {
         return day.getDisplayName(TextStyle.FULL, Locale.ENGLISH);
+    }
+
+    /** Mutable scratch space for one extraction pass. */
+    private static final class Extraction {
+        private final LocalDate today;
+        private final List<LocalDate> found = new ArrayList<>();
+        private final List<Issue> issues = new ArrayList<>();
+        private String text;
+
+        private Extraction(String input, LocalDate today) {
+            this.text = input;
+            this.today = today;
+        }
+
+        private void forEach(Pattern pattern, Consumer<MatchResult> action) {
+            Taken taken = take(pattern, text);
+            text = taken.text();
+            taken.matches().forEach(action);
+        }
+
+        private void addValid(int year, int month, int day, String shown) {
+            DateExtractor.addValid(found, issues, year, month, day, shown);
+        }
+
+        private Found<LocalDate> incomplete() {
+            return new Found<>(null, text, issues);
+        }
+
+        private Found<LocalDate> completeIfClean(LocalDate result) {
+            return new Found<>(issues.isEmpty() ? result : null, text, issues);
+        }
+    }
+
+    private record VagueHints(List<MatchResult> weekdays, List<MatchResult> vague) {
+        private boolean hasHints() {
+            return !weekdays.isEmpty() || !vague.isEmpty();
+        }
     }
 
     private record DatePattern(Pattern pattern, int dayGroup, int monthGroup) {

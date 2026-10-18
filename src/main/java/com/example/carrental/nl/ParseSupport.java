@@ -1,8 +1,8 @@
 package com.example.carrental.nl;
 
-import static com.example.carrental.nl.RequestField.DURATION;
-
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.regex.MatchResult;
 import java.util.regex.Pattern;
 
@@ -29,12 +29,48 @@ final class ParseSupport {
         return new Taken(matches, masked.toString());
     }
 
-    /** Mask every match and record one issue per match. The value is never guessed from these spans. */
-    static String reject(Pattern pattern, String text, List<Issue> issues, IssueKind kind, String message) {
-        Taken taken = take(pattern, text);
-        for (MatchResult match : taken.matches()) {
-            issues.add(new Issue(kind, DURATION, message.formatted(match.group().strip())));
+    /**
+     * Mutable scratch for one field extraction: residual text + issues.
+     * Each {@link #forEach}/{@link #reject} masks matches so later passes cannot re-read them.
+     */
+    static final class Scratch {
+        private String text;
+        private final List<Issue> issues = new ArrayList<>();
+
+        Scratch(String input) {
+            this.text = input == null ? "" : input;
         }
-        return taken.text();
+
+        String text() {
+            return text;
+        }
+
+        List<Issue> issues() {
+            return issues;
+        }
+
+        boolean hasIssues() {
+            return !issues.isEmpty();
+        }
+
+        void forEach(Pattern pattern, Consumer<MatchResult> action) {
+            Taken taken = take(pattern, text);
+            text = taken.text();
+            taken.matches().forEach(action);
+        }
+
+        /** Mask every match and record one issue per match. Never guesses a value from these spans. */
+        void reject(Pattern pattern, IssueKind kind, RequestField field, String message) {
+            forEach(pattern, match -> issues.add(
+                    new Issue(kind, field, message.formatted(match.group().strip()))));
+        }
+
+        <T> Found<T> done(T value) {
+            return new Found<>(value, text, issues);
+        }
+
+        <T> Found<T> empty() {
+            return new Found<>(null, text, issues);
+        }
     }
 }
