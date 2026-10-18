@@ -28,6 +28,70 @@ curl -s -X DELETE localhost:8080/api/reservations/<reservation-uuid>
 Fleet size is stored in the `fleet_capacity` table. On first startup (empty table), rows are
 seeded from `rental.fleet.sedan|suv|van` in `application.properties` (default 5 / 3 / 2).
 
+## How it works
+
+A short overview. The sections *Design decisions worth discussing* and *Known limitations / trade-offs*
+below go into more detail.
+
+### Architecture
+
+The code is layered:
+
+* **Controller** – HTTP endpoints and DTOs.
+* **Services** – `CarRentalService` applies the booking rules. `RentalAssistant` takes free text,
+  parses it, and books only when the parse is complete and has no issues.
+* **Storage** – `ReservationStore` is an interface, implemented with Spring Data JPA and H2, so bookings
+  survive a restart.
+* **Core logic** – availability, fleet and reservation rules are plain Java with no Spring dependency, so
+  they can be unit tested without starting the application.
+
+Modern Java is used where it helps. Records hold immutable values. `AssistantResponse` is a sealed
+interface with three outcomes (reserved, needs clarification, rejected), and the controller's `switch`
+over it has no `default`, so the compiler forces every outcome to be mapped to an HTTP status (201, 422, 409).
+
+### Capacity per car type
+
+Capacity is tracked per car **type**, not per physical car. Assigning a specific car at booking time can
+reject a request that would fit if earlier bookings were rearranged. Instead, the system checks one
+thing: at the busiest moment of the new rental, is the number of cars already in use below the fleet size?
+
+`Availability.peakLoad` keeps only the overlapping bookings, then counts how many are active at the start of
+the new rental and at the start of each overlapping booking inside it. The number of cars in use can only
+rise when a booking starts, so the maximum of those counts is the peak. `free = capacity - peak`.
+
+* Rentals are half-open intervals `[start, end)`, so a car returned at 10:00 can be picked up again at 10:00.
+* Three back-to-back one-day bookings overlap a three-day request but never run at the same time. Counting
+  overlaps would refuse it; the peak approach accepts it (covered by a test).
+* When no car is free, the assistant also suggests the earliest start that works.
+
+### Concurrency
+
+Two people booking the last SUV at the same moment must not both succeed. In `JpaReservationStore`, the
+availability check and the insert run inside a `ReentrantLock`, and the transaction commits **before** the
+lock is released. A `TransactionTemplate` is used instead of `@Transactional` for this reason: with the
+annotation the commit would happen after the method returns, possibly after the lock is released.
+A test sends 40 concurrent bookings at 3 SUVs and asserts that exactly 3 succeed.
+
+The lock works inside one process only (see *Known limitations / trade-offs*).
+
+### Natural-language interface
+
+The interface is rule-based. It is a pipeline of small extractors (date, duration, time, car type). Each one
+takes what it recognises and blanks it out of the text, so a number cannot be read twice (for example the
+"15" in "15 October" cannot become an hour).
+
+The parser never guesses silently. Anything missing, ambiguous, unsupported or invalid becomes an issue:
+"at 10" is ambiguous, "5 hours" is unsupported, "31 February" is invalid. All issues are returned together,
+and a booking is made only when the parse is complete.
+
+### Next steps
+
+* Database-level locking (row lock on the fleet row, or serializable transactions) for several instances.
+* Flyway migrations instead of `ddl-auto=update`.
+* A sweep-line peak calculation, O(n log n), instead of the current O(n²).
+* For the language side, put an LLM behind the same `ParseResult` contract and keep the current rules as
+  the validation layer, because model output still needs deterministic checks before it creates a booking.
+
 ## Layout
 
 | Package | Responsibility | Spring? |
