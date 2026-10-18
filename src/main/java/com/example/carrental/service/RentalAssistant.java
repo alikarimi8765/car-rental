@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
  * being guessed at.
  */
 @Service
-public final class RentalAssistant {
+public class RentalAssistant {
 
     private final CarRentalService service;
     private final ReservationParser parser;
