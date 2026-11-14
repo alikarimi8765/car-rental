@@ -167,6 +167,16 @@ service so "tomorrow" and "in the past" always agree.
 | request unclear / violates a rule (nothing booked) | 422 |
 | understood, but no free car of that type | 409 |
 | cancel unknown id | 404 |
+| malformed JSON, missing body, field too long (`customer` > 100, NL `text` > 500) | 400 |
+| database constraint hit (should not happen once validated) | 409 |
+| anything unexpected | 500, generic message plus a correlation id; the stack trace is only in the log |
+
+Every error is an RFC 9457 `ProblemDetail`. Each request gets an `X-Correlation-Id` (the caller's, if it is a short
+safe token, else a UUID); it is echoed in the response, shown in log lines and included in error bodies.
+
+Validation is split on purpose: **Bean Validation checks shape** (present, bounded size) on the DTOs, and
+**domain rules check meaning** (car type, dates, duration, availability) so the structured and natural-language
+endpoints share one set of messages.
 
 ## Known limitations / trade-offs
 
@@ -186,4 +196,5 @@ service so "tomorrow" and "in the past" always agree.
   `HH:MM` without am/pm is read as 24-hour time (documented and tested).
 * One car per request; quantity > 1 is reported as unsupported. Cancellation exists on the service
   and REST API but not in the NL layer ("cancel…" is detected and refused).
-* No authentication, rate limiting or request-size limits on the REST API.
+* No authentication or rate limiting on the REST API. Field sizes are bounded by validation, but there is no
+  overall request-body size limit beyond the servlet container's default.

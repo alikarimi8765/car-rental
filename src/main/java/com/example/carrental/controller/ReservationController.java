@@ -13,6 +13,8 @@ import com.example.carrental.service.AssistantResponse;
 import com.example.carrental.service.CarRentalService;
 import com.example.carrental.service.RentalAssistant;
 
+import jakarta.validation.Valid;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -47,13 +49,13 @@ public class ReservationController {
     }
 
     @PostMapping("/nl")
-    public ResponseEntity<OutcomeDto> reserveFromText(@RequestBody NaturalLanguageRequest request) {
+    public ResponseEntity<OutcomeDto> reserveFromText(@Valid @RequestBody NaturalLanguageRequest request) {
         AssistantResponse response = assistant.handle(request.text(), request.customer());
         return assistantResponseMapper.toHttpResponse(response);
     }
 
     @PostMapping
-    public ResponseEntity<ReservationDto> reserve(@RequestBody BookingRequest request) {
+    public ResponseEntity<ReservationDto> reserve(@Valid @RequestBody BookingRequest request) {
         BookingCommand command = bookingRequestMapper.toCommand(request);
         Reservation reservation = service.reserve(
                 command.carType(), command.start(), command.days(), command.customer());
