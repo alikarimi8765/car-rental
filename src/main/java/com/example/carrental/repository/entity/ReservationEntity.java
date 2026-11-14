@@ -29,6 +29,7 @@ public class ReservationEntity {
     @Column(nullable = false)
     private int days;
 
+    @Column(length = 100)
     private String customer;
 
     public ReservationEntity() {
