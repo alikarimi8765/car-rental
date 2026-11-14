@@ -1,7 +1,11 @@
 package com.example.carrental.service;
 
 import com.example.carrental.config.RentalProperties;
+import com.example.carrental.exception.CarUnavailableException;
+import com.example.carrental.exception.ReservationNotFoundException;
+import com.example.carrental.model.Availability;
 import com.example.carrental.model.CarType;
+import com.example.carrental.model.Fleet;
 import com.example.carrental.model.Reservation;
 import com.example.carrental.model.ReservationRules;
 import com.example.carrental.repository.ReservationStore;
@@ -13,6 +17,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Books cars by type. Capacity is a count per type: a request is accepted when
@@ -23,11 +28,20 @@ import java.util.Optional;
 public class CarRentalService {
 
     private final ReservationRules rules;
+    private final Fleet fleet;
     private final ReservationStore store;
+    private final BookingLock bookingLock;
 
-    public CarRentalService(Clock clock, RentalProperties properties, ReservationStore store) {
+    public CarRentalService(
+            Clock clock,
+            RentalProperties properties,
+            Fleet fleet,
+            ReservationStore store,
+            BookingLock bookingLock) {
         this.rules = new ReservationRules(clock, properties.maxRentalDays());
+        this.fleet = Objects.requireNonNull(fleet, "fleet");
         this.store = Objects.requireNonNull(store, "store");
+        this.bookingLock = Objects.requireNonNull(bookingLock, "bookingLock");
     }
 
     public int maxRentalDays() {
@@ -43,13 +57,13 @@ public class CarRentalService {
     }
 
     public int capacity(CarType type) {
-        return store.capacity(type);
+        return fleet.size(type);
     }
 
     /** How many cars of {@code type} are free for the entire period. */
     public int availableCount(CarType type, LocalDateTime start, int days) {
         rules.check(type, start, days);
-        return store.free(type, start, start.plusDays(days));
+        return Availability.free(fleet.size(type), store.ofType(type), start, start.plusDays(days));
     }
 
     public boolean isAvailable(CarType type, LocalDateTime start, int days) {
@@ -71,7 +85,7 @@ public class CarRentalService {
      */
     public Optional<LocalDateTime> earliestAvailableStart(CarType type, LocalDateTime notBefore, int days) {
         rules.check(type, notBefore, days);
-        return store.earliestStart(type, notBefore, days);
+        return Availability.earliestStart(fleet.size(type), store.ofType(type), notBefore, days);
     }
 
     public Reservation reserve(CarType type, LocalDateTime start, int days) {
@@ -80,10 +94,19 @@ public class CarRentalService {
 
     public Reservation reserve(CarType type, LocalDateTime start, int days, String customer) {
         rules.check(type, start, days);
-        return store.add(type, start, days, customer);
+        LocalDateTime end = start.plusDays(days);
+        return bookingLock.withLock(type, () -> {
+            int capacity = fleet.size(type);
+            if (Availability.free(capacity, store.ofType(type), start, end) <= 0) {
+                throw new CarUnavailableException(type, start, end, capacity);
+            }
+            return store.save(new Reservation(UUID.randomUUID().toString(), type, start, days, customer));
+        });
     }
 
     public Reservation cancel(String reservationId) {
-        return store.remove(reservationId);
+        Reservation existing = store.find(reservationId)
+                .orElseThrow(() -> new ReservationNotFoundException(reservationId));
+        return bookingLock.withLock(existing.carType(), () -> store.remove(reservationId));
     }
 }

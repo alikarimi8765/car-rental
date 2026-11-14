@@ -6,6 +6,7 @@ import static com.example.carrental.nl.RequestField.REQUEST;
 import com.example.carrental.model.CarType;
 import com.example.carrental.nl.ParseSupport.Found;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -42,11 +43,30 @@ import java.util.Optional;
 @Component
 public final class ReservationParser {
 
-    private final DateExtractor dates;
+    private final FieldExtractor<LocalDate> dates;
+    private final FieldExtractor<Integer> durations;
+    private final FieldExtractor<LocalTime> times;
+    private final FieldExtractor<CarType> carTypes;
 
     /** @param clock anchors relative dates such as "tomorrow" and "in 3 days" */
+    @Autowired
     public ReservationParser(Clock clock) {
-        this.dates = new DateExtractor(Objects.requireNonNull(clock, "clock"));
+        this(new DateExtractor(Objects.requireNonNull(clock, "clock")),
+                new DurationExtractor(),
+                new TimeExtractor(),
+                new CarTypeExtractor());
+    }
+
+    /** The passes run in the order of the parameters: date, duration, time, car type. */
+    ReservationParser(
+            FieldExtractor<LocalDate> dates,
+            FieldExtractor<Integer> durations,
+            FieldExtractor<LocalTime> times,
+            FieldExtractor<CarType> carTypes) {
+        this.dates = Objects.requireNonNull(dates, "dates");
+        this.durations = Objects.requireNonNull(durations, "durations");
+        this.times = Objects.requireNonNull(times, "times");
+        this.carTypes = Objects.requireNonNull(carTypes, "carTypes");
     }
 
     public ParseResult parse(String text) {
@@ -62,9 +82,9 @@ public final class ReservationParser {
         }
 
         Found<LocalDate> date = dates.extract(original);
-        Found<Integer> duration = DurationExtractor.extract(date.text());
-        Found<LocalTime> time = TimeExtractor.extract(duration.text());
-        Found<CarType> car = CarTypeExtractor.extract(time.text());
+        Found<Integer> duration = durations.extract(date.text());
+        Found<LocalTime> time = times.extract(duration.text());
+        Found<CarType> car = carTypes.extract(time.text());
 
         List<Issue> issues = new ArrayList<>();
         issues.addAll(car.issues());

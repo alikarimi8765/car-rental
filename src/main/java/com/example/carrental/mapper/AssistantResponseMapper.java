@@ -3,7 +3,6 @@ package com.example.carrental.mapper;
 import com.example.carrental.controller.ApiDtos.OutcomeDto;
 import com.example.carrental.controller.ApiDtos.ParsedDto;
 import com.example.carrental.controller.ApiDtos.ReservationDto;
-import com.example.carrental.model.Reservation;
 import com.example.carrental.service.AssistantResponse;
 
 import org.springframework.http.HttpStatus;
@@ -22,16 +21,12 @@ public class AssistantResponseMapper {
         return switch (response) {
             case AssistantResponse.Reserved reserved ->
                     response(HttpStatus.CREATED.value(), "RESERVED", reserved.message(), parsed,
-                            toReservationDto(reserved.reservation()));
+                            ApiMapper.toReservationDto(reserved.reservation()));
             case AssistantResponse.NeedsClarification clarification ->
                     response(UNPROCESSABLE, "NEEDS_CLARIFICATION", clarification.message(), parsed, null);
             case AssistantResponse.Rejected rejected ->
                     response(statusOf(rejected), "REJECTED", rejected.message(), parsed, null);
         };
-    }
-
-    public ReservationDto toReservationDto(Reservation reservation) {
-        return ApiMapper.toReservationDto(reservation);
     }
 
     private static int statusOf(AssistantResponse.Rejected rejected) {

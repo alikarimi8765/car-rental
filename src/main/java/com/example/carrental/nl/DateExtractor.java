@@ -35,7 +35,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /** Extracts a single start date from residual NL text. */
-final class DateExtractor {
+final class DateExtractor implements FieldExtractor<LocalDate> {
 
     private static final Pattern ISO = Pattern.compile("(?<![\\d/.:-])(\\d{4})-(\\d{1,2})-(\\d{1,2})(?!\\d)");
     private static final Pattern NUMERIC =
@@ -78,7 +78,8 @@ final class DateExtractor {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
-    Found<LocalDate> extract(String input) {
+    @Override
+    public Found<LocalDate> extract(String input) {
         Extraction ctx = new Extraction(input, LocalDate.now(clock));
 
         collectIso(ctx);

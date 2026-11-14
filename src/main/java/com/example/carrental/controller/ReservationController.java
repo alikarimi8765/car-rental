@@ -5,6 +5,7 @@ import com.example.carrental.controller.ApiDtos.NaturalLanguageRequest;
 import com.example.carrental.controller.ApiDtos.OutcomeDto;
 import com.example.carrental.controller.ApiDtos.ReservationDto;
 import com.example.carrental.model.Reservation;
+import com.example.carrental.mapper.ApiMapper;
 import com.example.carrental.mapper.AssistantResponseMapper;
 import com.example.carrental.mapper.BookingCommand;
 import com.example.carrental.mapper.BookingRequestMapper;
@@ -58,12 +59,12 @@ public class ReservationController {
                 command.carType(), command.start(), command.days(), command.customer());
 
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(assistantResponseMapper.toReservationDto(reservation));
+                .body(ApiMapper.toReservationDto(reservation));
     }
 
     @GetMapping
     public List<ReservationDto> list() {
-        return service.reservations().stream().map(assistantResponseMapper::toReservationDto).toList();
+        return service.reservations().stream().map(ApiMapper::toReservationDto).toList();
     }
 
     @DeleteMapping("/{id}")

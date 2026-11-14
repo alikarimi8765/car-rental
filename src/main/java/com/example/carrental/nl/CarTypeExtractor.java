@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /** Extracts a single car type from residual NL text. */
-final class CarTypeExtractor {
+final class CarTypeExtractor implements FieldExtractor<CarType> {
 
     // Optional quantity ("2 SUVs") followed by any known vehicle word.
     private static final String VEHICLE_RE = alternation(
@@ -36,10 +36,9 @@ final class CarTypeExtractor {
 
     private static final String ONE_CAR_ONLY = "'%s': only one car can be reserved per request.";
 
-    private CarTypeExtractor() {
-    }
 
-    static Found<CarType> extract(String input) {
+    @Override
+    public Found<CarType> extract(String input) {
         Scratch scratch = new Scratch(input);
         TreeSet<CarType> supported = new TreeSet<>();
         TreeSet<String> unsupported = new TreeSet<>();
