@@ -5,6 +5,7 @@ import com.example.carrental.model.CarType;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
+import java.util.EnumMap;
 import java.util.Map;
 
 /**
@@ -14,4 +15,17 @@ import java.util.Map;
  */
 @ConfigurationProperties(prefix = "rental")
 public record RentalProperties(Map<CarType, Integer> fleet, @DefaultValue("30") int maxRentalDays) {
+
+    /** Seed sizes for any car type not configured under {@code rental.fleet}. */
+    private static final Map<CarType, Integer> DEFAULT_FLEET =
+            Map.of(CarType.SEDAN, 5, CarType.SUV, 3, CarType.VAN, 2);
+
+    public RentalProperties {
+        var merged = new EnumMap<CarType, Integer>(CarType.class);
+        merged.putAll(DEFAULT_FLEET);
+        if (fleet != null) {
+            merged.putAll(fleet);
+        }
+        fleet = Map.copyOf(merged);
+    }
 }

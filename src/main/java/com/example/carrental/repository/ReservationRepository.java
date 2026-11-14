@@ -1,7 +1,7 @@
 package com.example.carrental.repository;
 
 import com.example.carrental.model.CarType;
-import com.example.carrental.model.entity.ReservationEntity;
+import com.example.carrental.repository.entity.ReservationEntity;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 

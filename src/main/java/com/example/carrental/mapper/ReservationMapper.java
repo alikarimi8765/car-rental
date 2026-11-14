@@ -1,7 +1,7 @@
 package com.example.carrental.mapper;
 
 import com.example.carrental.model.Reservation;
-import com.example.carrental.model.entity.ReservationEntity;
+import com.example.carrental.repository.entity.ReservationEntity;
 
 import org.springframework.stereotype.Component;
 
@@ -10,9 +10,6 @@ import org.springframework.stereotype.Component;
 public class ReservationMapper {
 
     public ReservationEntity toEntity(Reservation reservation) {
-        if (reservation == null) {
-            return null;
-        }
         ReservationEntity entity = new ReservationEntity();
         entity.setId(reservation.id());
         entity.setCarType(reservation.carType());
@@ -23,9 +20,6 @@ public class ReservationMapper {
     }
 
     public Reservation toDomain(ReservationEntity entity) {
-        if (entity == null) {
-            return null;
-        }
         return new Reservation(
                 entity.getId(),
                 entity.getCarType(),

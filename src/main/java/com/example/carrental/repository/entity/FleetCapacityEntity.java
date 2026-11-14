@@ -1,4 +1,4 @@
-package com.example.carrental.model.entity;
+package com.example.carrental.repository.entity;
 
 import com.example.carrental.model.CarType;
 

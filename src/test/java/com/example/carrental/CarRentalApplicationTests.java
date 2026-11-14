@@ -18,6 +18,8 @@ import com.example.carrental.service.RentalAssistant;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -126,14 +128,16 @@ class CarRentalApplicationTests {
         assertEquals(replacement.id(), reservations.findAll().getFirst().getId());
     }
 
-    @Test
-    void databaseNeverOversells() throws Exception {
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(CarType.class)
+    void databaseNeverOversells(CarType carType) throws Exception {
         LocalDateTime start = LocalDateTime.of(2026, 10, 20, 10, 0);
+        int capacity = service.capacity(carType);
         List<Callable<Boolean>> attempts = new ArrayList<>();
         for (int i = 0; i < 40; i++) {
             attempts.add(() -> {
                 try {
-                    service.reserve(CarType.SUV, start, 3);
+                    service.reserve(carType, start, 3);
                     return true;
                 } catch (CarUnavailableException e) {
                     return false;
@@ -150,8 +154,8 @@ class CarRentalApplicationTests {
             }
         }
 
-        assertEquals(3, successes);
-        assertEquals(3, reservations.findByCarType(CarType.SUV).size());
+        assertEquals(capacity, successes);
+        assertEquals(capacity, reservations.findByCarType(carType).size());
     }
 
     @Test

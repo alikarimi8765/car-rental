@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /** Extracts rental duration in whole days from residual NL text. */
-final class DurationExtractor {
+final class DurationExtractor implements FieldExtractor<Integer> {
 
     // Ambiguous and unsupported phrases are masked before the plain pattern,
     // so "2 or 3 days" cannot be read as just "3 days".
@@ -43,10 +43,9 @@ final class DurationExtractor {
     private static final String AMBIGUOUS_DURATION =
             "'%s' could be more than one duration; which one do you want?";
 
-    private DurationExtractor() {
-    }
 
-    static Found<Integer> extract(String input) {
+    @Override
+    public Found<Integer> extract(String input) {
         Scratch scratch = new Scratch(input);
         TreeSet<Integer> values = new TreeSet<>();
 

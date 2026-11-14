@@ -12,8 +12,6 @@ import java.util.Objects;
  */
 public record ReservationRules(Clock clock, int maxRentalDays) {
 
-    public static final int DEFAULT_MAX_DAYS = 30;
-
     private static final DateTimeFormatter FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     public ReservationRules {

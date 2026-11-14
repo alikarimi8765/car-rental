@@ -17,7 +17,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /** Extracts a single start time from residual NL text. */
-final class TimeExtractor {
+final class TimeExtractor implements FieldExtractor<LocalTime> {
 
     // Optional :ss so "10:00:00" is 10:00; a non-zero second is rejected.
     private static final Pattern NOON = Pattern.compile("\\b(noon|midday|midnight)\\b", CI);
@@ -28,10 +28,9 @@ final class TimeExtractor {
     private static final Pattern VAGUE_TIME =
             Pattern.compile("\\b(morning|afternoon|evening|tonight|night|lunchtime)\\b", CI);
 
-    private TimeExtractor() {
-    }
 
-    static Found<LocalTime> extract(String input) {
+    @Override
+    public Found<LocalTime> extract(String input) {
         Scratch scratch = new Scratch(input);
         TreeSet<LocalTime> found = new TreeSet<>();
 

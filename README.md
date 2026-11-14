@@ -40,8 +40,8 @@ The code is layered:
 * **Controller** – HTTP endpoints and DTOs.
 * **Services** – `CarRentalService` applies the booking rules. `RentalAssistant` takes free text,
   parses it, and books only when the parse is complete and has no issues.
-* **Storage** – `ReservationStore` is an interface, implemented with Spring Data JPA and H2, so bookings
-  survive a restart.
+* **Storage** – `ReservationStore` is a persistence-only interface (load, save, remove), implemented with
+  Spring Data JPA and H2, so bookings survive a restart. It contains no booking rules.
 * **Core logic** – availability, fleet and reservation rules are plain Java with no Spring dependency, so
   they can be unit tested without starting the application.
 
@@ -66,9 +66,9 @@ rise when a booking starts, so the maximum of those counts is the peak. `free = 
 
 ### Concurrency
 
-Two people booking the last SUV at the same moment must not both succeed. In `JpaReservationStore`, the
-availability check and the insert run inside a `ReentrantLock`, and the transaction commits **before** the
-lock is released. A `TransactionTemplate` is used instead of `@Transactional` for this reason: with the
+Two people booking the last SUV at the same moment must not both succeed. In `CarRentalService.reserve`, the
+availability check and the insert run inside a `BookingLock` (`TransactionalBookingLock`: one `ReentrantLock`
+per car type), and the transaction commits **before** the lock is released. A `TransactionTemplate` is used instead of `@Transactional` for this reason: with the
 annotation the commit would happen after the method returns, possibly after the lock is released.
 A test sends 40 concurrent bookings at 3 SUVs and asserts that exactly 3 succeed.
 
@@ -97,12 +97,12 @@ and a booking is made only when the parse is complete.
 | Package | Responsibility | Spring? |
 |---|---|---|
 | `model` | `CarType`, `Reservation` (record, half-open `[start, end)`), `Fleet`, `Availability`, `ReservationRules` | no |
-| `model.entity` | `ReservationEntity`, `FleetCapacityEntity` | yes |
+| `repository.entity` | `ReservationEntity`, `FleetCapacityEntity` | yes |
 | `repository` | `ReservationStore`, `ReservationRepository`, `FleetCapacityRepository`, `JpaReservationStore` | yes |
 | `mapper` | `ReservationMapper`, `BookingRequestMapper`, `AssistantResponseMapper`, `ApiMapper` | yes |
-| `service` | `CarRentalService`, `RentalAssistant`, `AssistantResponse` | mixed |
+| `service` | `CarRentalService`, `RentalAssistant`, `AssistantResponse`, `BookingLock` | mixed |
 | `util` | `HumanDates` | no |
-| `nl` | `ReservationParser`: text → `ParseResult` (structured data + `Issue`s) | no |
+| `nl` | `ReservationParser` chains `FieldExtractor` passes: text → `ParseResult` (structured data + `Issue`s) | no |
 | `controller` | `ReservationController`, `ApiDtos` | yes |
 | `exception` | `RentalException` hierarchy, `ApiExceptionHandler` | mixed |
 | `config` | `RentalConfig` (`Clock`, `Fleet`, `TransactionTemplate` beans), `RentalProperties` | yes |
@@ -132,7 +132,7 @@ and it can only be saturated if a booking ends exactly at `c`. The assistant use
 *"…the earliest start that works is 18 October 2026 at 10:00."*
 
 ### 4. Check-then-insert is atomic
-`reserve` holds a `ReentrantLock` across the availability check and the database commit.
+`reserve` holds a per-type `BookingLock` across the availability check and the database commit.
 The JPA transaction finishes before the lock is released, so a second request cannot read the table
 before the first insert is visible. A Spring test fires concurrent requests at 3 SUVs and asserts exactly 3 succeed.
 

@@ -2,7 +2,7 @@ package com.example.carrental.config;
 
 import com.example.carrental.model.CarType;
 import com.example.carrental.model.Fleet;
-import com.example.carrental.model.entity.FleetCapacityEntity;
+import com.example.carrental.repository.entity.FleetCapacityEntity;
 import com.example.carrental.repository.FleetCapacityRepository;
 
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -13,7 +13,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.util.EnumMap;
-import java.util.Map;
 
 /**
  * Registers values Spring cannot discover by stereotype scan:
@@ -23,10 +22,6 @@ import java.util.Map;
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(RentalProperties.class)
 public class RentalConfig {
-
-    /** Used only when {@code fleet_capacity} is empty and a type is missing from properties. */
-    private static final Map<CarType, Integer> SEED_SIZES =
-            Map.of(CarType.SEDAN, 5, CarType.SUV, 3, CarType.VAN, 2);
 
     @Bean
     Clock clock() {
@@ -53,11 +48,8 @@ public class RentalConfig {
     }
 
     private static void seed(FleetCapacityRepository capacities, RentalProperties properties) {
-        Map<CarType, Integer> configured =
-                properties.fleet() == null ? Map.of() : properties.fleet();
-
         for (CarType type : CarType.values()) {
-            int size = configured.getOrDefault(type, SEED_SIZES.get(type));
+            int size = properties.fleet().get(type);
             if (size < 0) {
                 throw new IllegalArgumentException(
                         "Fleet size for %s must be non-negative".formatted(type.label()));
